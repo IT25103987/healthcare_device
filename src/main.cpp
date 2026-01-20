@@ -3,6 +3,7 @@
 #include "TimeManager.h" // Double quotes look in include/ or local folder
 #include "State.h"
 #include "HartRate.h"
+#include "WeatherManager.h"
 
 // yasiru
 
@@ -37,6 +38,7 @@ int bpm = 0;
 unsigned long pressedTime = 0; // Stores when the button was first pressed
 bool isPressing = false;       // Tracks if the button is currently being held
 int buttonState = 0;
+bool longPressHandled = false; // Flag to ensure long press is only handled once
 
 // State of the watch
 State state;
@@ -53,32 +55,69 @@ int button2 = 0;
 
 TimeManager timeManager;
 HartRate heartMonitor;
+WeatherManager weather;
 
 void setup()
 {
-  heartMonitor.begin();
-  state.setState(false);
+  /* ================= SERIAL ================= */
+  // Start serial communication for debugging
+  Serial.begin(115200);
+  delay(1000); // Allow serial monitor to open
+
+  /* ================= I2C ================= */
+  // IMPORTANT: I2C must be started BEFORE any sensor uses it
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000); // Standard I2C speed (safe & stable)
+
+
+  //wether manager setup//
+  if(weather.begin()){
+    Serial.println("✅ BMP280 OK");
+  } else {
+    Serial.println("❌ BMP280 FAIL");
+  } 
+
+  /* ================= BUTTONS ================= */
+  // Configure buttons as INPUT_PULLUP (LOW = pressed)
   pinMode(PowerButton, INPUT_PULLUP);
   pinMode(BUTTON2, INPUT_PULLUP);
   pinMode(BUTTON3, INPUT_PULLUP);
+
+  /* ================= STATE ================= */
+  // Turn watch OFF initially
+  state.setState(false);
+
+  /* ================= RTC (DS3231) ================= */
+  // Initialize RTC module
   timeManager.begin();
-  Serial.begin(115200);
-  delay(1000);
 
-  /* I2C */
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(50000); // VERY IMPORTANT
+  /*
+    ⚠️ IMPORTANT:
+    The line below MUST be used ONLY ONCE to set RTC time,
+    then COMMENT IT OUT permanently.
 
-  /* ---------- OLED ---------- */
-  display.begin(0x3C, true);
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  */
+
+  /* ================= OLED (SH1106) ================= */
+  // Initialize OLED display
+  if (!display.begin(0x3C, true))
+  {
+    Serial.println("❌ OLED NOT FOUND");
+    while (1)
+      ; // Stop program if OLED fails
+  }
+
   display.clearDisplay();
   display.setTextColor(SH110X_WHITE);
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.println("System starting...");
   display.display();
+  delay(1500);
 
-  /* ---------- BMP280 ---------- */
+  /* ================= BMP280 ================= */
+  // Initialize BMP280 pressure & temperature sensor
   if (bmp.begin(0x76))
   {
     bmpOK = true;
@@ -86,74 +125,66 @@ void setup()
   }
   else
   {
+    bmpOK = false;
     Serial.println("❌ BMP280 FAIL");
   }
 
-  /* ---------- MAX30102 ---------- */
-  // if (particleSensor.begin(Wire, I2C_SPEED_STANDARD))
-  // {
-  //   particleSensor.setup(
-  //       60,  // LED brightness
-  //       4,   // sample avg
-  //       2,   // RED + IR
-  //       100, // sample rate
-  //       411, // pulse width
-  //       4096 // ADC range
-  //   );
-  //   particleSensor.setPulseAmplitudeGreen(0);
-  //   Serial.println("✅ MAX30102 OK");
-  // }
-  // else
-  // {
-  //   Serial.println("❌ MAX30102 FAIL");
-  // }
+  /* ================= MAX30102 ================= */
+  // Initialize Heart Rate Sensor
+  heartMonitor.begin();
 
-  /* ---------- MPU9250 ---------- */
+  /* ================= MPU9250 ================= */
+  // Wake up MPU9250 accelerometer/gyro
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B);
-  Wire.write(0); // wake up
+  Wire.write(0x6B); // Power management register
+  Wire.write(0);    // Wake up sensor
   Wire.endTransmission(true);
   Serial.println("✅ MPU9250 OK");
 
-  Serial.println("ALL SENSORS READY");
+  /* ================= READY ================= */
+  Serial.println("🚀 ALL SENSORS READY");
+
+  display.clearDisplay();
+  display.setCursor(20, 25);
+  display.println("READY");
+  display.display();
+  delay(1000);
 }
 
 void start()
 {
-  // We only update the display if the time has actually changed
-  if (timeManager.update())
-  {
-    display.clearDisplay();
+  static String lastTime = "";
 
-    // --- 1. Draw Date at the top ---
-    display.setTextSize(1);
-    display.setCursor(35, 0);
-    display.print(timeManager.getDateString());
-    display.drawLine(0, 10, 128, 10, SH110X_WHITE); // Divider
+  String currentTime = timeManager.getTimeString();
 
-    // --- 2. Draw Center Time ---
-    display.setTextSize(2);
-    String timeStr = timeManager.getTimeString();
+  lastTime = currentTime;
 
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(timeStr, 0, 0, &x1, &y1, &w, &h);
+  display.clearDisplay();
 
-    int centerX = (128 - w) / 2;
-    int centerY = (64 - h) / 2;
+  display.setTextSize(1);
+  display.setCursor(35, 0);
+  display.print(timeManager.getDateString());
+  display.drawLine(0, 10, 128, 10, SH110X_WHITE);
 
-    display.setCursor(centerX, centerY);
-    display.print(timeStr);
+  display.setTextSize(2);
 
-    // ---------- PRESS BUTTON ----------
-    display.setTextSize(1);                 // smaller text
-    display.setCursor(10, centerY + h + 4); // slightly below welcome
-    display.println("   PRESS BUTTON \n    TO CONTINUE");
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(currentTime, 0, 0, &x1, &y1, &w, &h);
 
-    display.display();
-  }
+  int centerX = (128 - w) / 2;
+  int centerY = (64 - h) / 2;
+
+  display.setCursor(centerX, centerY);
+  display.print(currentTime);
+
+  display.setTextSize(1);
+  display.setCursor(10, centerY + h + 4);
+  display.println("   PRESS BUTTON");
+  display.println("    TO CONTINUE");
+
+  display.display();
 }
-
 void chackState()
 {
   buttonState = digitalRead(10);
@@ -163,24 +194,26 @@ void chackState()
     // Button pressed
     if (!isPressing)
     {
-
       isPressing = true;
       pressedTime = millis();
+      longPressHandled = false; // Reset flag on new press
     }
     else
     {
       // Check duration
       unsigned long holdDuration = millis() - pressedTime;
-      if (holdDuration >= 3000)
+      if (holdDuration >= 3000 && !longPressHandled)
       {
-        state.setState(true); // Long press detected
+        // Toggle the state (on/off) only once per long press
+        state.setState(!state.getState());
+        longPressHandled = true; // Prevent multiple toggles
       }
     }
   }
   else
   { // Button released
     isPressing = false;
-    state.setState(false); // Reset state when button is released
+    // Don't change state when released - keep current state
   }
 }
 // Simple function to draw a heart shape
@@ -191,7 +224,8 @@ void drawHeart(int x, int y, int size)
   display.fillTriangle(x - size, y, x + size, y, x, y + size, SH110X_WHITE);
 }
 
-void showHeartRateScreen(){
+void showHeartRateScreen()
+{
   display.clearDisplay();
   HeartData data = heartMonitor.update();
 
@@ -204,8 +238,8 @@ void showHeartRateScreen(){
   // --- IR Value ---
   display.setTextSize(1);
   display.setCursor(0, 14);
-  display.print("IR: ");
-  display.print(data.irValue);
+  display.print(">> ");
+  display.print(data.irValue > 150000 ? "wait....." : "place the finger");
 
   // --- Current BPM ---
   display.setCursor(0, 24);
@@ -222,49 +256,59 @@ void showHeartRateScreen(){
   display.display();
 }
 
-void showWeatherScreen(){
+void showWeatherScreen()
+{
   display.clearDisplay();
 
-  // --- Header ---
+  if (!weather.isConnected())
+  {
+    display.setTextSize(1);
+    display.setCursor(20, 25);
+    display.print("SENSOR NOT FOUND");
+    display.display();
+    return;
+  }
+
+  // --- 1. Top Header ---
   display.setTextSize(1);
-  display.setCursor(30, 0);
-  display.print("WEATHER");
-  display.drawLine(0, 10, 128, 10, SH110X_WHITE);
+  display.setCursor(0, 0);
+  display.print("ENV MONITOR");
+  display.drawLine(0, 10, 128, 10, SH110X_WHITE); // Horizontal Line
 
-  if (bmpOK)
-  {
-    float temp = bmp.readTemperature();
-    float pressure = bmp.readPressure() / 100.0F;
+  // --- 2. Main Temperature (Big Text) ---
+  display.setTextSize(2);
+  display.setCursor(0, 18);
+  display.print((int)weather.getTemperature());
+  display.setTextSize(1);
+  display.print(" o"); // Degree symbol
+  display.setTextSize(2);
+  display.print("C");
 
-    // --- Temperature ---
-    display.setTextSize(1);
-    display.setCursor(0, 16);
-    display.print("Temp: ");
-    display.print(temp, 1);
-    display.print(" C");
+  // --- 3. Forecast Icon/Text (Right Side) ---
+  display.setTextSize(1);
+  display.setCursor(65, 18);
+  display.print("FORECAST:");
+  display.setCursor(65, 30);
+  display.print(weather.getForecast());
 
-    // --- Pressure ---
-    display.setCursor(0, 28);
-    display.print("Pressure: ");
-    display.print(pressure, 0);
-    display.print(" hPa");
+  // --- 4. Middle Divider ---
+  display.drawFastHLine(0, 42, 128, SH110X_WHITE);
 
-    // --- Altitude ---
-    float altitude = bmp.readAltitude(1013.25);
-    display.setCursor(0, 40);
-    display.print("Alt: ");
-    display.print(altitude, 0);
-    display.print(" m");
-  }
-  else
-  {
-    display.setTextSize(2);
-    display.setCursor(10, 25);
-    display.print("BMP280");
-    display.setCursor(10, 45);
-    display.setTextSize(1);
-    display.print("NOT FOUND");
-  }
+  // --- 5. Bottom Data Bar ---
+  // Pressure on the left
+  display.setTextSize(1);
+  display.setCursor(0, 48);
+  display.print("Prs: ");
+  display.print((int)weather.getPressure());
+  display.print("hPa");
+
+  // Floors climbed on the right
+  display.setCursor(75, 48);
+  display.print("FLR: ");
+  display.print(weather.getFloorsClimbed());
+
+  // --- 6. Decorative Visual: Vertical Separator ---
+  display.drawFastVLine(70, 45, 15, SH110X_WHITE);
 
   display.display();
 }
@@ -273,152 +317,153 @@ int window = 0;               // 0 = Clock, 1 = Heart Rate, 2 = Weather/BMP
 bool lastButton2State = HIGH; // To detect the *moment* the button is pressed
 
 void loop()
+{
+  timeManager.update(); // keep RTC fresh
+
+  // 1. Check the power button state
+
+  // 2. CONSTANTLY sample the heart rate (CRITICAL: No delays here!)
+  // This must run every single loop cycle to "see" the pulse wave
+  //   int currentBPM = heartMonitor.update();
+  // Serial.print("IR: "); Serial.println(data.irValue);
+  // Serial.print("BPM: "); Serial.println(data.bpm);
+  // Serial.print("AVG BPM: "); Serial.println(data.avgBpm);
+
+  // 1. Check if the Power Button is being held (updates state)
+  chackState();
+
+  // 2. ALWAYS sample heart rate (No delays allowed for accuracy)
+
+  // 3. ONLY run display logic if the watch "state" is ON
+  if (state.getState())
   {
 
-    // 1. Check the power button state
-
-    // 2. CONSTANTLY sample the heart rate (CRITICAL: No delays here!)
-    // This must run every single loop cycle to "see" the pulse wave
-    //   int currentBPM = heartMonitor.update();
-    // Serial.print("IR: "); Serial.println(data.irValue);
-    // Serial.print("BPM: "); Serial.println(data.bpm);
-    // Serial.print("AVG BPM: "); Serial.println(data.avgBpm);
-
-    // 1. Check if the Power Button is being held (updates state)
-    chackState();
-
-    // 2. ALWAYS sample heart rate (No delays allowed for accuracy)
-
-    // 3. ONLY run display logic if the watch "state" is ON
-    if (state.getState())
+    // --- BUTTON 2: SWITCH WINDOWS ---
+    int currentButton2 = digitalRead(BUTTON2);
+    if (currentButton2 == LOW && lastButton2State == HIGH)
     {
-
-      // --- BUTTON 2: SWITCH WINDOWS ---
-      int currentButton2 = digitalRead(BUTTON2);
-      if (currentButton2 == LOW && lastButton2State == HIGH)
-      {
-        window++;
-        if (window > 2)
-          window = 0;
-        display.clearDisplay();
-        delay(50); // Small debounce
-      }
-      lastButton2State = currentButton2;
-
-      // --- WINDOW MANAGER ---
-      switch (window)
-      {
-      case 0:
-        start(); // Show Clock
-        break;
-
-      case 1:
-        showHeartRateScreen();
-        break;
-
-      case 2:
-        showWeatherScreen();
-        break;
-      }
-    }
-    else
-    {
-      // If state is FALSE (Power Off), clear the display and reset window
+      window++;
+      if (window > 2)
+        window = 0;
       display.clearDisplay();
-      display.display();
-      window = 0;
+      delay(50); // Small debounce
     }
+    lastButton2State = currentButton2;
 
-    // CRITICAL: Reduced delay to allow sensor to work
-    delay(5);
+    // --- WINDOW MANAGER ---
+    switch (window)
+    {
+    case 0:
+      start(); // Show Clock
+      break;
 
-    // chackState();
+    case 1:
+      showHeartRateScreen();
+      break;
 
-    // if (state.getState())
-    // {
-    //   start();
-    // }
-
-    // button2 = digitalRead(BUTTON2);
-    // if (button2 == LOW){
-    //   if (state.getState()){
-    // Serial.println(heartMonitor.update());
-    // }
-
-    // display.clearDisplay();
-
-    // int currentBPM =
-
-    // // --- 3. Draw Center Heart Rate ---
-    // display.setTextSize(2);
-    // static int displayBPM = 0;
-
-    // String bpmStr = String(displayBPM) + " BPM";
-
-    // int16_t x1, y1;
-    // uint16_t w, h;
-    // display.getTextBounds(bpmStr, 0, 0, &x1, &y1, &w, &h);
-
-    // int centerX = (128 - w) / 2;
-    // int centerY = (64 - h) / 2;
-
-    // display.setCursor(centerX, centerY);
-    // display.print(bpmStr);
-
-    // // --- 4. Pulse Indicator ---
-    // // Visual feedback that the sensor is working
-    // if (currentBPM > 0)
-    // {
-    //   display.fillCircle(centerX - 15, centerY + 7, 4, SH110X_WHITE);
-    // }
-
-    // // ---------- FOOTER ----------
-    // display.setTextSize(1);
-    // display.setCursor(10, 50);
-    // display.println("  SENSING PULSE...");
-
-    // display.display();
-    // }
-    // button2 = digitalRead(button2);
-    // if(button2 == HIGH){
-    //   Serial.println("swiched");
-    // }
-    // /* ================= HEART RATE ================= */
-    // long irValue = particleSensor.getIR();
-    // if (irValue > 5000 && checkForBeat(irValue)) {
-    //   long delta = millis() - lastBeat;
-    //   lastBeat = millis();
-
-    //   if (delta > 300 && delta < 2000) {
-    //     bpm = 60000 / delta;
-    //   }
-    // }
-
-    // /* ================= BMP280 ================= */
-    // float temp = NAN, pres = NAN;
-    // if (bmpOK) {
-    //   temp = bmp.readTemperature();
-    //   pres = bmp.readPressure() / 100.0F;
-    // }
-
-    // /* ================= MPU9250 ================= */
-    // Wire.beginTransmission(MPU_ADDR);
-    // Wire.write(0x3B);
-    // Wire.endTransmission(false);
-    // Wire.requestFrom(MPU_ADDR, 6, true);
-
-    // AcX = Wire.read()<<8 | Wire.read();
-    // AcY = Wire.read()<<8 | Wire.read();
-    // AcZ = Wire.read()<<8 | Wire.read();
-
-    // /* ================= SERIAL OUTPUT ================= */
-    // Serial.println("----- SENSOR DATA -----");
-    // Serial.print("Temp      : "); Serial.print(temp); Serial.println(" C");
-    // Serial.print("Pressure  : "); Serial.print(pres); Serial.println(" hPa");
-    // Serial.print("ACC X: "); Serial.print(AcX);
-    // Serial.print(" Y: "); Serial.print(AcY);
-    // Serial.print(" Z: "); Serial.println(AcZ);
-    // Serial.println("-----------------------");
-
-    // /* ================= OLED OUTPUT ================= */
+    case 2:
+      showWeatherScreen();
+      break;
+    }
   }
+  else
+  {
+    // If state is FALSE (Power Off), clear the display and reset window
+    display.clearDisplay();
+    display.display();
+    window = 0;
+  }
+
+  // CRITICAL: Reduced delay to allow sensor to work
+  delay(5);
+
+  // chackState();
+
+  // if (state.getState())
+  // {
+  //   start();
+  // }
+
+  // button2 = digitalRead(BUTTON2);
+  // if (button2 == LOW){
+  //   if (state.getState()){
+  // Serial.println(heartMonitor.update());
+  // }
+
+  // display.clearDisplay();
+
+  // int currentBPM =
+
+  // // --- 3. Draw Center Heart Rate ---
+  // display.setTextSize(2);
+  // static int displayBPM = 0;
+
+  // String bpmStr = String(displayBPM) + " BPM";
+
+  // int16_t x1, y1;
+  // uint16_t w, h;
+  // display.getTextBounds(bpmStr, 0, 0, &x1, &y1, &w, &h);
+
+  // int centerX = (128 - w) / 2;
+  // int centerY = (64 - h) / 2;
+
+  // display.setCursor(centerX, centerY);
+  // display.print(bpmStr);
+
+  // // --- 4. Pulse Indicator ---
+  // // Visual feedback that the sensor is working
+  // if (currentBPM > 0)
+  // {
+  //   display.fillCircle(centerX - 15, centerY + 7, 4, SH110X_WHITE);
+  // }
+
+  // // ---------- FOOTER ----------
+  // display.setTextSize(1);
+  // display.setCursor(10, 50);
+  // display.println("  SENSING PULSE...");
+
+  // display.display();
+  // }
+  // button2 = digitalRead(button2);
+  // if(button2 == HIGH){
+  //   Serial.println("swiched");
+  // }
+  // /* ================= HEART RATE ================= */
+  // long irValue = particleSensor.getIR();
+  // if (irValue > 5000 && checkForBeat(irValue)) {
+  //   long delta = millis() - lastBeat;
+  //   lastBeat = millis();
+
+  //   if (delta > 300 && delta < 2000) {
+  //     bpm = 60000 / delta;
+  //   }
+  // }
+
+  // /* ================= BMP280 ================= */
+  // float temp = NAN, pres = NAN;
+  // if (bmpOK) {
+  //   temp = bmp.readTemperature();
+  //   pres = bmp.readPressure() / 100.0F;
+  // }
+
+  // /* ================= MPU9250 ================= */
+  // Wire.beginTransmission(MPU_ADDR);
+  // Wire.write(0x3B);
+  // Wire.endTransmission(false);
+  // Wire.requestFrom(MPU_ADDR, 6, true);
+
+  // AcX = Wire.read()<<8 | Wire.read();
+  // AcY = Wire.read()<<8 | Wire.read();
+  // AcZ = Wire.read()<<8 | Wire.read();
+
+  // /* ================= SERIAL OUTPUT ================= */
+  // Serial.println("----- SENSOR DATA -----");
+  // Serial.print("Temp      : "); Serial.print(temp); Serial.println(" C");
+  // Serial.print("Pressure  : "); Serial.print(pres); Serial.println(" hPa");
+  // Serial.print("ACC X: "); Serial.print(AcX);
+  // Serial.print(" Y: "); Serial.print(AcY);
+  // Serial.print(" Z: "); Serial.println(AcZ);
+  // Serial.println("-----------------------");
+
+  // /* ================= OLED OUTPUT ================= */
+}
