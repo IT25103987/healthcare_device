@@ -86,7 +86,6 @@ void setup()
 
   ecg.begin();
   activity.begin();
-  vibrator.vibrateFor(500);
 
   /* ================= BUTTONS ================= */
   // Configure buttons as INPUT_PULLUP (LOW = pressed)
@@ -523,11 +522,13 @@ void showStepsScreen(){
 int window = 0;               // 0 = Clock, 1 = Heart Rate, 2 = Weather/BMP
 bool lastButton2State = HIGH; // To detect the *moment* the button is pressed
 bool fallDetected = false;
+
+
 void loop(){
 
   timeManager.update(); // keep RTC fresh
   activity.update();
-  vibrator.update();
+  vibrate.update();
 
   fallDetected = activity.isFallDetected();
   if (fallDetected)
@@ -551,6 +552,7 @@ void loop(){
       if (window > 4)
         window = 0;
       display.clearDisplay();
+      vibrate.vibrateFor(100);  // Short vibration pulse when switching
       delay(50); 
     }
     lastButton2State = currentButton2;
@@ -558,25 +560,20 @@ void loop(){
     switch (window)
     {
     case 0:
-      vibrate.vibrateOn();
       start();
       break;
 
     case 1:
-      vibrate.vibrateOn();
       showHeartRateScreen();
       break;
 
     case 2:
-      vibrate.vibrateOn();
       showWeatherScreen();
       break;
     case 3:
-      vibrate.vibrateOn();
       showECGScreen();
       break;
     case 4:
-      vibrate.vibrateOn();
       showStepsScreen();
       break;
     }

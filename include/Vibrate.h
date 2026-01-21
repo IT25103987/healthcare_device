@@ -1,5 +1,5 @@
-#ifndef State_h
-#define State_h
+#ifndef VIBRATE_H
+#define VIBRATE_H
 
 #include <Arduino.h>
 class Vibrate{
@@ -7,24 +7,25 @@ class Vibrate{
         unsigned long vibrateStartTime = 0;
         unsigned long vibrateDuration = 0;
         bool isVibrating = false;
+        int pinNum= 6;
 
     public:
     Vibrate() {
-        pinMode(6, OUTPUT);
+        pinMode(pinNum, OUTPUT);
     }
 
     void vibrateOn() {
-        digitalWrite(6, HIGH);
+        digitalWrite(pinNum, HIGH);
     }
 
     void vibrateOff() {
-        digitalWrite(6, LOW);
+        digitalWrite(pinNum, LOW);
         isVibrating = false;
     }
 
     // Vibrate for duration in milliseconds
     void vibrateFor(unsigned long durationMs) {
-        digitalWrite(6, HIGH);
+        digitalWrite(pinNum, HIGH);
         vibrateStartTime = millis();
         vibrateDuration = durationMs;
         isVibrating = true;
