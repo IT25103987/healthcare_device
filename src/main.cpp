@@ -4,8 +4,10 @@
 #include "State.h"
 #include "HartRate.h"
 #include "WeatherManager.h"
+#include "ECGManager.h"
+#include "ActivityManager.h"
+#include "Vibrate.h"
 
-// yasiru
 
 /* ================= OLED ================= */
 #include <Adafruit_GFX.h>
@@ -56,6 +58,9 @@ int button2 = 0;
 TimeManager timeManager;
 HartRate heartMonitor;
 WeatherManager weather;
+ActivityManager activity;
+Vibrate vibrate;
+ECGManager ecg(36, 38, 37);
 
 void setup()
 {
@@ -69,13 +74,19 @@ void setup()
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000); // Standard I2C speed (safe & stable)
 
-
-  //wether manager setup//
-  if(weather.begin()){
+  // wether manager setup//
+  if (weather.begin())
+  {
     Serial.println("✅ BMP280 OK");
-  } else {
+  }
+  else
+  {
     Serial.println("❌ BMP280 FAIL");
-  } 
+  }
+
+  ecg.begin();
+  activity.begin();
+  vibrator.vibrateFor(500);
 
   /* ================= BUTTONS ================= */
   // Configure buttons as INPUT_PULLUP (LOW = pressed)
@@ -185,6 +196,7 @@ void start()
 
   display.display();
 }
+
 void chackState()
 {
   buttonState = digitalRead(10);
@@ -215,6 +227,65 @@ void chackState()
     isPressing = false;
     // Don't change state when released - keep current state
   }
+}
+
+void showECGScreen()
+{
+  display.clearDisplay();
+
+  if (!ecg.isConnected())
+  {
+    display.setCursor(20, 30);
+    display.print("ATTACH PADS...");
+    display.display();
+    return;
+  }
+
+  // --- 1. Waveform Drawing Variables ---
+  static int xPos = 0;   // Current horizontal position
+  static int lastY = 32; // Previous vertical position
+
+  // --- 2. Get Data & Process Decisions ---
+  int raw = analogRead(36);
+  bool isBeat = ecg.detectBeat(raw);
+  int yPos = ecg.getGraphValue(40); // Top 40 pixels for graph
+
+  // --- 3. Draw UI Header & Decisions ---
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("ECG Status: ");
+  display.print(ecg.getRhythmStatus());
+
+  display.drawFastHLine(0, 42, 128, SH110X_WHITE); // Middle Divider
+  display.setCursor(0, 48);
+  display.print("Stress: ");
+  display.println(ecg.getStressLevel());
+
+  // --- 4. THE MISSING PART: Drawing the Wave ---
+  if (xPos > 0)
+  {
+    // Connect the previous point to the new point
+    display.drawLine(xPos - 1, lastY, xPos, yPos, SH110X_WHITE);
+  }
+
+  // Update variables for the next loop
+  lastY = yPos;
+  xPos++;
+
+  // Wrap around logic: Reset when the line reaches the end of the screen
+  if (xPos >= 128)
+  {
+    xPos = 0;
+    display.clearDisplay(); // Clear to start fresh on the left
+  }
+
+  // Heart beat animation (flash circle)
+  if (isBeat)
+  {
+    display.fillCircle(120, 5, 4, SH110X_WHITE);
+  }
+
+  display.display();
 }
 // Simple function to draw a heart shape
 void drawHeart(int x, int y, int size)
@@ -313,56 +384,200 @@ void showWeatherScreen()
   display.display();
 }
 
+void drawWarningIcon(int x, int y)
+{
+  // Draw Triangle Outline
+  display.drawTriangle(x, y, x - 20, y + 35, x + 20, y + 35, SH110X_WHITE);
+
+  // Draw Exclamation Mark
+  display.fillRect(x - 2, y + 10, 5, 15, SH110X_WHITE); // The stick
+  display.fillCircle(x, y + 30, 2, SH110X_WHITE);       // The dot
+}
+
+void fallAlert()
+{
+  int countdown = 100; // 10 seconds (if delay is 100ms)
+  bool flashState = false;
+
+  for (int i = 0; i < countdown; i++)
+  {
+    display.clearDisplay();
+
+    // 1. Draw the Warning Icon in Center
+    drawWarningIcon(64, 5);
+
+    // 2. Big Text
+    display.setTextSize(2);
+    display.setCursor(10, 45); // Adjust based on your screen
+    display.print("FALL DETECTED");
+
+    // 3. Countdown Progress Bar (Fills up)
+    // Map 'i' (0-100) to screen width (0-128)
+    int barWidth = map(i, 0, 100, 0, 128);
+    display.fillRect(0, 0, barWidth, 4, SH110X_WHITE); // Top loading bar
+
+    // 4. "SOS" Text at bottom
+    display.setTextSize(1);
+    display.setCursor(35, 30);
+    display.print("SENDING SOS...");
+
+    // 5. Visual Flash Effect (Siren style)
+    if (i % 5 == 0)
+    { // Every 5th frame, flip the flash state
+      flashState = !flashState;
+      display.invertDisplay(flashState); // Inverts Black/White
+    }
+
+    display.display();
+
+    // 6. Allow User to Cancel (Button Press)
+    // If user presses any button, STOP the alert
+    if (digitalRead(10) == LOW || digitalRead(11) == LOW)
+    {
+      display.invertDisplay(false); // Reset screen
+      display.clearDisplay();
+      display.setCursor(25, 25);
+      display.print("CANCELLED");
+      display.display();
+      delay(1000);
+      return; // Exit the function
+    }
+
+    delay(100); // Speed of the loop
+  }
+
+  // --- AFTER LOOP (If not cancelled) ---
+  display.invertDisplay(false); // Reset normal colors
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(10, 20);
+  display.print("SOS SENT!");
+  display.display();
+  delay(2000);
+}
+
+void drawShoeIcon(int x, int y) {
+    // Sole of the shoe
+    display.fillRoundRect(x, y + 8, 20, 5, 2, SH110X_WHITE);
+    // Main body
+    display.fillRoundRect(x + 2, y + 2, 14, 8, 2, SH110X_WHITE);
+    // Ankle part
+    display.fillRect(x + 4, y - 2, 8, 6, SH110X_WHITE);
+    // Laces (black lines on white body)
+    display.drawLine(x + 6, y, x + 10, y, SH110X_BLACK);
+    display.drawLine(x + 6, y + 3, x + 10, y + 3, SH110X_BLACK);
+}
+void showStepsScreen(){
+  display.clearDisplay();
+
+  // --- 1. Fetch Data ---
+  int steps = activity.getSteps();
+  int goal = 6000; // Daily Goal
+
+  // Estimate Stats:
+  // Avg step is 0.762 meters | Avg cal per step is 0.04
+  float distanceKm = steps * 0.000762;
+  int calories = steps * 0.04;
+
+  // --- 2. Header & Icon ---
+  drawShoeIcon(10, 5); // Draw shoe at top left
+  display.setTextSize(1);
+  display.setCursor(38, 5);
+  display.print("PEDOMETER");
+  display.drawLine(0, 18, 128, 18, SH110X_WHITE);
+
+  // --- 3. Main Step Count (Big & Bold) ---
+  display.setTextSize(2);
+  // Center the number based on how many digits
+  int xOffset = (steps < 10) ? 55 : (steps < 100) ? 50
+                                : (steps < 1000)  ? 45
+                                                  : 35;
+  display.setCursor(xOffset, 25);
+  display.print(steps);
+
+  display.setTextSize(1);
+  display.setCursor(xOffset + (String(steps).length() * 12) + 2, 32);
+  display.print("stps");
+
+  // --- 4. Goal Progress Bar ---
+  // Draw frame
+  display.drawRect(10, 45, 108, 6, SH110X_WHITE);
+
+  // Calculate fill width (mapped to 0-106 pixels)
+  int fillWidth = map(constrain(steps, 0, goal), 0, goal, 0, 106);
+  display.fillRect(11, 46, fillWidth, 4, SH110X_WHITE);
+
+  // --- 5. Stats Footer (Dist / Kcal) ---
+  display.setCursor(5, 55);
+  display.print("Dist: ");
+  display.print(distanceKm, 1); // 1 decimal place
+  display.print("km");
+
+  display.setCursor(70, 55);
+  display.print("Cal: ");
+  display.print(calories);
+
+  display.display();
+}
+
 int window = 0;               // 0 = Clock, 1 = Heart Rate, 2 = Weather/BMP
 bool lastButton2State = HIGH; // To detect the *moment* the button is pressed
+bool fallDetected = false;
+void loop(){
 
-void loop()
-{
   timeManager.update(); // keep RTC fresh
+  activity.update();
+  vibrator.update();
+
+  fallDetected = activity.isFallDetected();
+  if (fallDetected)
+  {
+    // If a fall is detected, force the watch to turn on
+    fallAlert();
+    fallDetected = false; // Reset fall detected after alert
+  }
 
   // 1. Check the power button state
-
-  // 2. CONSTANTLY sample the heart rate (CRITICAL: No delays here!)
-  // This must run every single loop cycle to "see" the pulse wave
-  //   int currentBPM = heartMonitor.update();
-  // Serial.print("IR: "); Serial.println(data.irValue);
-  // Serial.print("BPM: "); Serial.println(data.bpm);
-  // Serial.print("AVG BPM: "); Serial.println(data.avgBpm);
-
-  // 1. Check if the Power Button is being held (updates state)
   chackState();
 
   // 2. ALWAYS sample heart rate (No delays allowed for accuracy)
-
-  // 3. ONLY run display logic if the watch "state" is ON
-  if (state.getState())
-  {
+  if (state.getState()){
 
     // --- BUTTON 2: SWITCH WINDOWS ---
     int currentButton2 = digitalRead(BUTTON2);
     if (currentButton2 == LOW && lastButton2State == HIGH)
     {
       window++;
-      if (window > 2)
+      if (window > 4)
         window = 0;
       display.clearDisplay();
-      delay(50); // Small debounce
+      delay(50); 
     }
     lastButton2State = currentButton2;
 
-    // --- WINDOW MANAGER ---
     switch (window)
     {
     case 0:
-      start(); // Show Clock
+      vibrate.vibrateOn();
+      start();
       break;
 
     case 1:
+      vibrate.vibrateOn();
       showHeartRateScreen();
       break;
 
     case 2:
+      vibrate.vibrateOn();
       showWeatherScreen();
+      break;
+    case 3:
+      vibrate.vibrateOn();
+      showECGScreen();
+      break;
+    case 4:
+      vibrate.vibrateOn();
+      showStepsScreen();
       break;
     }
   }
@@ -376,94 +591,4 @@ void loop()
 
   // CRITICAL: Reduced delay to allow sensor to work
   delay(5);
-
-  // chackState();
-
-  // if (state.getState())
-  // {
-  //   start();
-  // }
-
-  // button2 = digitalRead(BUTTON2);
-  // if (button2 == LOW){
-  //   if (state.getState()){
-  // Serial.println(heartMonitor.update());
-  // }
-
-  // display.clearDisplay();
-
-  // int currentBPM =
-
-  // // --- 3. Draw Center Heart Rate ---
-  // display.setTextSize(2);
-  // static int displayBPM = 0;
-
-  // String bpmStr = String(displayBPM) + " BPM";
-
-  // int16_t x1, y1;
-  // uint16_t w, h;
-  // display.getTextBounds(bpmStr, 0, 0, &x1, &y1, &w, &h);
-
-  // int centerX = (128 - w) / 2;
-  // int centerY = (64 - h) / 2;
-
-  // display.setCursor(centerX, centerY);
-  // display.print(bpmStr);
-
-  // // --- 4. Pulse Indicator ---
-  // // Visual feedback that the sensor is working
-  // if (currentBPM > 0)
-  // {
-  //   display.fillCircle(centerX - 15, centerY + 7, 4, SH110X_WHITE);
-  // }
-
-  // // ---------- FOOTER ----------
-  // display.setTextSize(1);
-  // display.setCursor(10, 50);
-  // display.println("  SENSING PULSE...");
-
-  // display.display();
-  // }
-  // button2 = digitalRead(button2);
-  // if(button2 == HIGH){
-  //   Serial.println("swiched");
-  // }
-  // /* ================= HEART RATE ================= */
-  // long irValue = particleSensor.getIR();
-  // if (irValue > 5000 && checkForBeat(irValue)) {
-  //   long delta = millis() - lastBeat;
-  //   lastBeat = millis();
-
-  //   if (delta > 300 && delta < 2000) {
-  //     bpm = 60000 / delta;
-  //   }
-  // }
-
-  // /* ================= BMP280 ================= */
-  // float temp = NAN, pres = NAN;
-  // if (bmpOK) {
-  //   temp = bmp.readTemperature();
-  //   pres = bmp.readPressure() / 100.0F;
-  // }
-
-  // /* ================= MPU9250 ================= */
-  // Wire.beginTransmission(MPU_ADDR);
-  // Wire.write(0x3B);
-  // Wire.endTransmission(false);
-  // Wire.requestFrom(MPU_ADDR, 6, true);
-
-  // AcX = Wire.read()<<8 | Wire.read();
-  // AcY = Wire.read()<<8 | Wire.read();
-  // AcZ = Wire.read()<<8 | Wire.read();
-
-  // /* ================= SERIAL OUTPUT ================= */
-  // Serial.println("----- SENSOR DATA -----");
-  // Serial.print("Temp      : "); Serial.print(temp); Serial.println(" C");
-  // Serial.print("Pressure  : "); Serial.print(pres); Serial.println(" hPa");
-  // Serial.print("ACC X: "); Serial.print(AcX);
-  // Serial.print(" Y: "); Serial.print(AcY);
-  // Serial.print(" Z: "); Serial.println(AcZ);
-  // Serial.println("-----------------------");
-
-  // /* ================= OLED OUTPUT ================= */
 }
