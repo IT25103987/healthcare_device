@@ -552,7 +552,7 @@ void loop(){
       if (window > 4)
         window = 0;
       display.clearDisplay();
-      vibrate.vibrateFor(100);  // Short vibration pulse when switching
+      vibrate.vibrateFor(500);  // Short vibration pulse when switching
       delay(50); 
     }
     lastButton2State = currentButton2;
