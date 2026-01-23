@@ -58,9 +58,17 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later'
 });
 
+// Stricter rate limiting for sensitive endpoints
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // Lower limit for sensitive operations
+  message: 'Too many requests from this IP, please try again later'
+});
+
 // Apply rate limiting to API routes (but not to ESP32 data endpoint)
 app.use('/api/auth', limiter);
-app.use('/api/alerts', limiter);
+app.use('/api/alerts', strictLimiter);
+app.use('/api/data/:deviceId', strictLimiter); // Protected routes only
 
 // Health check endpoint
 app.get('/health', (req, res) => {
