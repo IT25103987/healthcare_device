@@ -9,6 +9,7 @@
 #include "Vibrate.h"
 
 
+
 /* ================= OLED ================= */
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
@@ -42,6 +43,13 @@ bool isPressing = false;       // Tracks if the button is currently being held
 int buttonState = 0;
 bool longPressHandled = false; // Flag to ensure long press is only handled once
 
+// SOS button steup
+unsigned long SOSpressedTime = 0; // Stores when the button was first pressed
+bool SOSisPressing = false;       // Tracks if the button is currently being held
+int SOSbuttonState = 0;
+bool SOSlongPressHandled = false; // Flag to ensure long press is only handled once
+
+
 // State of the watch
 State state;
 
@@ -73,6 +81,7 @@ void setup()
   // IMPORTANT: I2C must be started BEFORE any sensor uses it
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000); // Standard I2C speed (safe & stable)
+
 
   // wether manager setup//
   if (weather.begin())
@@ -196,6 +205,105 @@ void start()
   display.display();
 }
 
+
+void drawPhoneHandset(int x, int y) {
+  // Main handle of the phone
+  display.fillRoundRect(x, y, 24, 8, 3, SH110X_WHITE);
+  // Left Earpiece
+  display.fillCircle(x + 2, y + 6, 5, SH110X_WHITE);
+  // Right Mouthpiece
+  display.fillCircle(x + 22, y + 6, 5, SH110X_WHITE);
+  // Cord / Antenna line (Optional style)
+  display.drawLine(x+12, y, x+12, y-4, SH110X_WHITE); 
+}
+
+
+void showEmergencyCall() {
+  int callDuration = 50; // 50 frames * 100ms = 5 seconds
+  
+  for (int i = 0; i < callDuration; i++) {
+    display.clearDisplay();
+
+    // --- 1. DRAW ICON & WAVES ---
+    int iconX = 52;
+    int iconY = 20;
+    
+    // Draw the phone slightly rotated (simulated by offset)
+    drawPhoneHandset(iconX, iconY);
+
+    // Animate Signal Waves (Expanding Circles)
+    // We use (i % N) to make them loop repeatedly
+    if (i % 10 > 2) display.drawCircle(iconX + 12, iconY + 4, 15, SH110X_WHITE);
+    if (i % 10 > 5) display.drawCircle(iconX + 12, iconY + 4, 22, SH110X_WHITE);
+    if (i % 10 > 8) display.drawCircle(iconX + 12, iconY + 4, 29, SH110X_WHITE);
+
+    // --- 2. TEXT STATUS ---
+    display.setTextSize(1);
+    display.setCursor(35, 0);
+    display.print("EMERGENCY");
+
+    display.setTextSize(2);
+    display.setCursor(15, 45);
+    
+    // Blink the "DIALING" text every few frames
+    if (i % 8 < 5) {
+      display.print("DIALING..");
+    }
+
+    // --- 3. PROGRESS BAR ---
+    // A thin line at the bottom that fills up
+    display.drawRect(14, 60, 100, 4, SH110X_WHITE); // Frame
+    int progress = map(i, 0, callDuration, 0, 98);  // Calculate width
+    display.fillRect(15, 61, progress, 2, SH110X_WHITE); // Fill
+
+    display.display();
+    vibrate.vibrateFor(100); // Short vibration pulse
+    delay(100); // Animation speed
+  }
+
+  // --- 4. CALL CONNECTED SCREEN ---
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(10, 25);
+  display.print("CONNECTED");
+  display.setTextSize(1);
+  display.setCursor(30, 45);
+  display.print("00:01");
+  display.display();
+  delay(2000); // Show "Connected" for 2 seconds
+}
+
+void SOSchackState()
+{
+  SOSbuttonState = digitalRead(12);
+
+  if (SOSbuttonState == LOW)
+  {
+    // Button pressed
+    if (!SOSisPressing)
+    {
+      SOSisPressing = true;
+      SOSpressedTime = millis();
+      SOSlongPressHandled = false; // Reset flag on new press
+    } 
+    else
+    {
+      // Check duration
+      unsigned long holdDuration = millis() - SOSpressedTime;
+      if (holdDuration >= 3000 && !SOSlongPressHandled)
+      {
+        showEmergencyCall();
+        SOSlongPressHandled = true; // Prevent multiple toggles
+      }
+    }
+  }
+  else
+  { // Button released
+    SOSisPressing = false;
+    // Don't change state when released - keep current state
+  }
+}
+
 void chackState()
 {
   buttonState = digitalRead(10);
@@ -314,7 +422,7 @@ void showHeartRateScreen()
   // --- Current BPM ---
   display.setCursor(0, 24);
   display.print("BPM: ");
-  display.print((int)data.bpm);
+  display.print((int)data.currentBpm);
 
   // --- Average BPM ---
   display.setCursor(0, 34);
@@ -523,12 +631,85 @@ int window = 0;               // 0 = Clock, 1 = Heart Rate, 2 = Weather/BMP
 bool lastButton2State = HIGH; // To detect the *moment* the button is pressed
 bool fallDetected = false;
 
+   // --- 4. HEART RATE ALERT SCREEN ---
+void showHeartAlert(String status, float bpm, int alertLevel) {
+        // alertLevel 2 = CRITICAL (Flash Screen)
+        // alertLevel 1 = WARNING (Static Screen)
 
+        int duration = 30; // Show for 3 seconds
+        bool flashState = false;
+
+        for (int i = 0; i < duration; i++) {
+            display.clearDisplay();
+
+            // 1. Draw Heart Icon (Top Center)
+            // Simple Heart Shape
+            int x = 58; int y = 5;
+            display.fillCircle(x, y, 5, SH110X_WHITE);
+            display.fillCircle(x + 10, y, 5, SH110X_WHITE);
+            display.fillTriangle(x - 5, y, x + 15, y, x + 5, y + 15, SH110X_WHITE);
+
+            // 2. Status Label (e.g., "CRITICAL HIGH")
+            display.setTextSize(1);
+            // Center text roughly based on length
+            display.setCursor(10, 25); 
+            display.print(status);
+
+            // 3. BPM Value (Big & Bold)
+            display.setTextSize(2);
+            display.setCursor(45, 40);
+            display.print((int)bpm);
+            
+            display.setTextSize(1);
+            display.setCursor(85, 47);
+            display.print("BPM");
+
+            // 4. Visual Urgency (Flashing)
+            if (alertLevel == 2) { 
+                // Flash every 5 frames for Critical alerts
+                if (i % 5 == 0) {
+                    flashState = !flashState;
+                    display.invertDisplay(flashState);
+                }
+            } else {
+                // Ensure screen is normal for non-critical warnings
+                display.invertDisplay(false);
+            }
+
+            display.display();
+            vibrate.vibrateFor(100); // Short vibration pulse
+            delay(100);
+        }
+        
+        // Reset screen state after loop
+        display.invertDisplay(false);
+    }
+void chackHeartData(HeartData data){
+if (data.threeMinAvg > 0) {
+        
+        // --- LEVEL 2: CRITICAL (Flash Screen + Buzzer + Vibrate) ---
+        if (data.alertLevel == 2) {
+            showHeartAlert(data.status, data.threeMinAvg, 2); 
+        }
+        
+        // --- LEVEL 1: WARNING (Static Screen + Vibrate) ---
+        else if (data.alertLevel == 1) {
+            showHeartAlert(data.status, data.threeMinAvg, 1);
+        }
+        
+        // --- LEVEL 0: NORMAL (Silent Cloud Update) ---
+        else {
+
+        }
+    }
+  
+}
 void loop(){
 
   timeManager.update(); // keep RTC fresh
   activity.update();
   vibrate.update();
+  chackHeartData(heartMonitor.update());
 
   fallDetected = activity.isFallDetected();
   if (fallDetected)
@@ -540,6 +721,7 @@ void loop(){
 
   // 1. Check the power button state
   chackState();
+  SOSchackState();
 
   // 2. ALWAYS sample heart rate (No delays allowed for accuracy)
   if (state.getState()){
