@@ -1,9 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
+const rateLimit = require('express-rate-limit');
 const HealthData = require('../models/HealthData');
 const alertService = require('../services/alertService');
 const { protect } = require('../middleware/auth');
+
+// Rate limiter for protected data routes
+const dataRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // Limit each IP to 50 requests per window
+  message: 'Too many data requests from this IP, please try again later'
+});
 
 /**
  * @route   POST /api/data
@@ -85,7 +93,7 @@ router.post('/', [
  * @desc    Get latest vitals for a device
  * @access  Private
  */
-router.get('/:deviceId', protect, async (req, res) => {
+router.get('/:deviceId', protect, dataRateLimiter, async (req, res) => {
   try {
     const { deviceId } = req.params;
 
@@ -120,7 +128,7 @@ router.get('/:deviceId', protect, async (req, res) => {
  * @desc    Get historical data for a device
  * @access  Private
  */
-router.get('/:deviceId/history', protect, async (req, res) => {
+router.get('/:deviceId/history', protect, dataRateLimiter, async (req, res) => {
   try {
     const { deviceId } = req.params;
     const { period = '24h', limit = 100 } = req.query;
@@ -205,7 +213,7 @@ router.get('/:deviceId/history', protect, async (req, res) => {
  * @desc    Get latest N readings for a device
  * @access  Private
  */
-router.get('/:deviceId/latest/:count', protect, async (req, res) => {
+router.get('/:deviceId/latest/:count', protect, dataRateLimiter, async (req, res) => {
   try {
     const { deviceId, count } = req.params;
     const limit = Math.min(parseInt(count) || 10, 1000); // Max 1000 records
@@ -234,7 +242,7 @@ router.get('/:deviceId/latest/:count', protect, async (req, res) => {
  * @desc    Delete all data for a device (admin only)
  * @access  Private (Admin)
  */
-router.delete('/:deviceId', protect, async (req, res) => {
+router.delete('/:deviceId', protect, dataRateLimiter, async (req, res) => {
   try {
     // Check if user is admin
     if (req.user.role !== 'admin') {
