@@ -13,8 +13,8 @@ export const websocketService = {
         },
         reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: 5,
+        reconnectionDelayMax: 10000,
+        reconnectionAttempts: 10,
       });
 
       socket.on('connect', () => {

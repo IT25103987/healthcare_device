@@ -76,7 +76,7 @@ export const formatters = {
   getVitalStatus: (vital, value) => {
     // Returns 'normal', 'warning', or 'critical'
     const ranges = {
-      heartRate: { normal: [60, 100], warning: [50, 110], critical: [0, 40] },
+      heartRate: { normal: [60, 100], warning: [50, 110], critical: [0, 40, 111, 300] },
       systolic: { normal: [90, 120], warning: [80, 140], critical: [0, 70] },
       diastolic: { normal: [60, 80], warning: [50, 90], critical: [0, 40] },
       oxygenSaturation: { normal: [95, 100], warning: [90, 94], critical: [0, 85] },

@@ -161,8 +161,10 @@ server.listen(PORT, () => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled Promise Rejection:', err);
-  // Close server & exit process
-  server.close(() => process.exit(1));
+  // Log error but don't exit in production to avoid unnecessary downtime
+  if (process.env.NODE_ENV !== 'production') {
+    server.close(() => process.exit(1));
+  }
 });
 
 // Handle SIGTERM

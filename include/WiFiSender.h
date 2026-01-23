@@ -244,9 +244,11 @@ public:
         
         doc["alertStatus"] = alertStatus;
         
-        // Add timestamp (Unix epoch)
-        // Note: You'll need to use RTC time here if available
-        // For now, using milliseconds since boot
+        // Add timestamp
+        // NOTE: Using millis() provides milliseconds since boot (not real time)
+        // For production use, integrate with RTC to get actual timestamp:
+        // Example: doc["timestamp"] = rtc.now().unixtime();
+        // For now, backend will use server time when receiving data
         doc["timestamp"] = millis();
         
         // Serialize JSON to string

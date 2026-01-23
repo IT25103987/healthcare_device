@@ -29,9 +29,9 @@ class AlertService {
       alertType = 'CRITICAL_HIGH';
       message = `Critical: Heart rate dangerously high at ${heartRate} BPM (> 110)`;
       shouldAlert = true;
-    } else if (heartRate >= 91 && heartRate <= 109) {
+    } else if (heartRate >= 91 && heartRate <= 110) {
       alertType = 'WARNING_HIGH';
-      message = `Warning: Heart rate elevated at ${heartRate} BPM (91-109)`;
+      message = `Warning: Heart rate elevated at ${heartRate} BPM (91-110)`;
       shouldAlert = true;
     } else {
       // Normal range: 50-90 BPM
