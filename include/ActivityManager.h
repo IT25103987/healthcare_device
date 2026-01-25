@@ -85,11 +85,11 @@ class ActivityManager {
     // --- GETTERS ---
 
     bool isFallDetected() {
-        if (fallDetected) {
-            fallDetected = false; 
-            return true;
-        }
-        return false;
+        return fallDetected;  // Just return the state, don't reset it
+    }
+
+    void clearFallDetected() {
+        fallDetected = false;  // Caller decides when to clear
     }
 
     // This is the method you asked for:
